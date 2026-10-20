@@ -20,8 +20,10 @@
 #include "../../tests/coop_probe.h"
 
 #include "strata/core/layer.hpp"
+#include "strata/core/conversation_file.hpp"
 #include "strata/core/conversation_cache.hpp"
 #include "strata/core/session.hpp"
+#include "strata/kernels/cpu/hadamard.hpp"
 #include "strata/kernels/ngram.hpp"
 
 #include <algorithm>
@@ -62,6 +64,7 @@ struct MoeArgs {
 struct GdnArgs { uint32_t h_k, h_v, channels, commit; float eps; uint32_t plane; };
 struct QsaArgs { uint32_t pos0, pos_base, max_cells, n_tok; float eps; };
 struct GlueArgs { uint32_t n, n_tok, n_embd, topk; };
+struct HadArgs { uint32_t width, has_signs; float scale; uint32_t pad; };
 struct ArgArgs { uint32_t n_vocab, parts; };
 // the routed gate/up's i-quant grids from constant memory (QUANT_CTAB, function constant 23 of quant.metal): bitwise
 // the threadgroup copy's values, 3-7% faster on the M5 Max; STRATA_METAL_CTAB=0 turns it off
@@ -104,6 +107,8 @@ struct PromptBufs {
         kcur, vcur, iqr, ikr, qcur, qcurh, qidx, scores, qids, part, XQ, xqh, logits, ids, wts, bcnt, boff, eoff, tiles, meta,
         stok, sw, pos, XS, HS, YE, yr, gsh, ush, hh, ys, sgv, WD, WU, Wqkv, Wz, Wal, Wbe, Wout, Wq, Wk, Wv, Wiq, Wik, Wr,
         Wsg, Wshg, Wshu, Wshd, pemb, pembh, pkey, pval, keyn, qn, gated, normW, Wpk, Wpv;
+    mtl::Buffer xrot;   // Gyro: the FFN input rotated for the folded experts
+    bool ev3 = true;    // the experts on the v3 (matrix-unit register operand) kernels; false: v2 (trellis types have only those)
 };
 
 // The vision path (--vision, GENI requests), from the shared host code: the image rows of the prompt being read
@@ -128,7 +133,14 @@ public:
     // PLE history, each QSA layer's indexer tail and tail-block key); the KV and pooled keys are positional
     bool checkpoint_save(strata::core::ConversationCheckpoint& c, std::string& err);
     bool checkpoint_restore(const strata::core::ConversationCheckpoint& c, std::string& err);
+    // the byte sizes of the checkpoint payload, one source for save, restore and the generic validator
+    struct CheckpointSizes { size_t gdn, ple, tails, dead, block_pos; };
+    CheckpointSizes checkpoint_sizes() const;
     void reset();   // a new sequence (session_zero): the running state zeroed
+    // The conversation snapshots read the K/V through the session's QsaStates (and the drafter's): describe the
+    // window's own K/V buffers there (INT8 codes and scales, full residency), as the CUDA session holds its own
+    void bind_kv();
+    void set_draft_state(strata::core::QsaState* st) { draft_ = st; }
     void set_max_t(int t) { max_t_ = std::min(t, MAXT); }
     // ---- the MTP draft layer (mtp.hpp's math on mac-kern's kernels; the MTP GGUF from tools/mtp_pack.py)
     bool mtp_load(const std::string& gguf, int max_t, std::string& err);
@@ -228,6 +240,14 @@ private:
         ysh_, sg_, qfull_, kcur_, vcur_, iqr_, ikr_, qcur_, qidx_, scores_, qids_, part_, cs_, lm_, apv_, api_, tokout_,
         emb_, pkey_, pval_, qkvL_, alL_, beL_, zL_, ydump_, keyn_, qn_, gated_, normW_, pleHist_;
     Act XA_, XF_, XY_, XQ_, XH_, XE_;
+    // Gyro (hadamard.hpp): the experts' input activations are rotated before the routed GEMVs - the FFN input into xr_ (the
+    // router and the shared expert read it unrotated), the SwiGLU rows h_ in place
+    mtl::Buffer xr_, hsg_[2];      // hsg_: the sign vectors of widths N, NFF
+    bool hs_set_[2] = {false, false};
+    bool had_ready_ = false;
+    void had_init();
+    void had_rows(std::vector<mtl::Dispatch>& ds, const mtl::Buffer& x, size_t x_off, const mtl::Buffer& y, size_t y_off,
+                  int width, int rows);
     int cur_inj_ = 0;
     // state
     std::vector<mtl::Buffer> gst_, ghist_[2], kq_, vq_, ksc_, vsc_, tail_, dead_, pooled_;
@@ -283,6 +303,14 @@ private:
     double pg_ms_ = 0;
     int64_t pg_tok_ = 0;
 public:
+    // Gyro: some layer's routed experts are trellis-coded (ggml 144-146), which the matrix-unit prompt kernels do not take
+    bool trellis_experts() const {
+        for (int l = 0; l < 48; ++l) {
+            const gguf::Tensor* t = f_.find("blk." + std::to_string(l) + ".ffn_gate_exps.weight");
+            if (t && t->type >= 144 && t->type <= 146) return true;
+        }
+        return false;
+    }
     bool prompt_gemm_on(int64_t n) const;
     bool prompt_gemm_init(std::string& err);
     bool prompt_chunk(const int32_t* tokens, int Tn, int64_t pos0, std::string& err);
@@ -341,6 +369,7 @@ private:
     mtl::Buffer Wm_, mnorm_, mR_, memb_, men_, me2_, mhn_, mh2_, midx_, mbo_, minj_[2], mqids_, mlm_;
     std::map<std::string, size_t> mnorm_off_;
     std::vector<mtl::Buffer> mkq_, mvq_, mksc_, mvsc_, mtail_, mdead_, mpooled_;
+    strata::core::QsaState* draft_ = nullptr;   // the drafter's QsaState (MtpDrafter::kv_state), described by bind_kv
     // the draft head over a token subset (data/draft_vocab.bin, as the CUDA drafter): its rows gathered from the head
     mtl::Buffer mhead_;
     gguf::Tensor mhead_t_;
@@ -439,26 +468,52 @@ bool Window::init(const strata::core::ModelGeometry& g, strata::core::SessionSta
         st_ = std::make_unique<ExpertStream>();
         if (!st_->open(f_, err)) return false;
     } else {
-        madvise(f_.map, f_.map_bytes, MADV_WILLNEED);
-        // the chunks of a model bigger than one Metal buffer overlap by the largest range bound at one offset: a tensor,
-        // or a layer's routed experts (gate, up and down, bound together at the first of them: moe_rebase)
-        size_t span = 0;
-        for (const auto& kv : f_.tensors) span = std::max<size_t>(span, kv.second.bytes);
-        for (int l = 0; l < 48; ++l) {
-            const std::string b = "blk." + std::to_string(l) + ".";
-            const gguf::Tensor *g = f_.find(b + "ffn_gate_exps.weight"), *u = f_.find(b + "ffn_up_exps.weight"),
-                               *d = f_.find(b + "ffn_down_exps.weight");
-            if (!g || !u || !d) continue;
-            const uint64_t lo = std::min({g->offset, u->offset, d->offset});
-            const uint64_t hi = std::max({g->offset + g->bytes, u->offset + u->bytes, d->offset + d->bytes});
-            span = std::max<size_t>(span, hi - lo);
+        // a Gyro file holds the PLE table (54 GB of the 92) in the same GGUF: the host code reads it with direct I/O,
+        // no kernel touches it, so it is neither wrapped nor read ahead (it would take its 54 GB of file pages and
+        // wired GPU residency); the rest is wrapped as the ranges around it
+        const gguf::Tensor* ple = f_.find("per_layer_token_embd.weight");
+        const size_t pg = 16384, maxlen = (size_t) cx_->max_buffer_length() / pg * pg;
+        std::vector<std::pair<size_t, size_t>> ranges;
+        size_t head = 0, tail = 0;
+        if (ple && ple->bytes > 0) {
+            head = std::min<size_t>(ple->offset / pg * pg, f_.map_bytes);
+            tail = std::min<size_t>((ple->offset + ple->bytes + pg - 1) / pg * pg, f_.map_bytes);
+            if (head > 0) ranges.push_back({0, head});
+            if (tail < f_.map_bytes) ranges.push_back({tail, f_.map_bytes});
         }
-        W_ = cx_->wrap(f_.map, f_.map_bytes, span);
+        bool split = !ranges.empty() && !(std::getenv("STRATA_METAL_WRAP_PLE") && std::string(std::getenv("STRATA_METAL_WRAP_PLE")) == "1");
+        for (const auto& rg : ranges)
+            if (rg.second - rg.first > maxlen) split = false;
+        if (split) {
+            for (const auto& rg : ranges) madvise((uint8_t*) f_.map + rg.first, rg.second - rg.first, MADV_WILLNEED);
+            // pages of the table the header parse or an earlier run left in the mapping: not wanted
+            madvise((uint8_t*) f_.map + head, tail - head, MADV_RANDOM);
+            W_ = cx_->wrap_ranges(f_.map, ranges);
+        } else {
+            madvise(f_.map, f_.map_bytes, MADV_WILLNEED);
+            // the chunks of a model bigger than one Metal buffer overlap by the largest range bound at one offset: a tensor,
+            // or a layer's routed experts (gate, up and down, bound together at the first of them: moe_rebase)
+            size_t span = 0;
+            // (the PLE table is read from the file by the shared host code, never by a kernel: a Gyro file holds it in the same
+            // GGUF - 54 GB, more than a chunk can overlap by - so it does not set the span)
+            for (const auto& kv : f_.tensors)
+                if (kv.first != "per_layer_token_embd.weight") span = std::max<size_t>(span, kv.second.bytes);
+            for (int l = 0; l < 48; ++l) {
+                const std::string b = "blk." + std::to_string(l) + ".";
+                const gguf::Tensor *g = f_.find(b + "ffn_gate_exps.weight"), *u = f_.find(b + "ffn_up_exps.weight"),
+                                   *d = f_.find(b + "ffn_down_exps.weight");
+                if (!g || !u || !d) continue;
+                const uint64_t lo = std::min({g->offset, u->offset, d->offset});
+                const uint64_t hi = std::max({g->offset + g->bytes, u->offset + u->bytes, d->offset + d->bytes});
+                span = std::max<size_t>(span, hi - lo);
+            }
+            W_ = cx_->wrap(f_.map, f_.map_bytes, span);
+        }
         if (W_.handle == nullptr) { err = "metal window: cannot wrap " + shard1 + " as a Metal buffer"; return false; }
     }
     n_vocab_ = (int64_t) T("output.weight").shape[1];
     lib_ = cx_->compile({"quant.metal", "units.metal", "moe.metal", "gemv.metal", "router.metal", "gr.metal", "gr2.metal",
-                         "glue.metal"});
+                         "glue.metal", "hadamard.metal"});
     rcounter_ = cx_->alloc(16);
     lgdn_ = cx_->compile({"gdn.metal"}, "#define NO_GGML_COMMON 1\n");
     lqsa_ = cx_->compile({"qsa.metal", "qsa2.metal"}, "#define NO_GGML_COMMON 1\n");
@@ -615,6 +670,40 @@ void Window::gemv(std::vector<mtl::Dispatch>& ds, const gguf::Tensor& t, const A
     const int rpt = (S / K) * (32 / L) * Rr;
     d.grid[0] = (n_out + rpt - 1) / rpt;
     d.tg[0] = S * 32;
+    push(ds, d);
+}
+
+void Window::had_init() {
+    if (had_ready_) return;
+    const auto& hs = strata::kernels::cpu::hadamard_spec();
+    const int widths[2] = {N, NFF};
+    for (int k = 0; k < 2; ++k) {
+        const float* sg = strata::kernels::cpu::hadamard_signs(widths[k]);
+        hs_set_[k] = sg != nullptr;
+        hsg_[k] = cx_->alloc(4 * (size_t) widths[k]);
+        if (sg) std::memcpy(hsg_[k].ptr, sg, 4 * (size_t) widths[k]);
+        if (widths[k] % hs.block != 0) {
+            std::fprintf(stderr, "strata metal: Hadamard block %d does not divide the expert width %d\n", hs.block, widths[k]);
+            std::exit(1);
+        }
+    }
+    xr_ = cx_->alloc(4 * (size_t) MAXT * N);
+    std::fprintf(stderr, "strata metal: Hadamard-folded experts (block %d, signs %s)\n", hs.block,
+                 hs_set_[0] || hs_set_[1] ? "from the pack" : "none");
+    had_ready_ = true;
+}
+
+// y = H_block (signs * x) per block of each of `rows` rows of `width` (hadamard_rows of glue.metal); y may be x
+void Window::had_rows(std::vector<mtl::Dispatch>& ds, const mtl::Buffer& x, size_t x_off, const mtl::Buffer& y, size_t y_off,
+                      int width, int rows) {
+    const int blk = strata::kernels::cpu::hadamard_spec().block, k = width == N ? 0 : 1;
+    HadArgs ha{(uint32_t) width, hs_set_[k] ? 1u : 0u, 1.0f / std::sqrt((float) blk), 0};
+    mtl::Dispatch d;
+    d.p = P(lib_, "hadamard_rows", {}, "hadamard_rows");
+    d.args = {mtl::Arg::B(x, x_off), mtl::Arg::B(y, y_off), mtl::Arg::B(hsg_[k]), mtl::Arg::V(ha)};
+    d.grid[0] = width / blk;
+    d.grid[1] = rows;
+    d.tg[0] = blk;
     push(ds, d);
 }
 
@@ -826,7 +915,8 @@ void Window::layer(std::vector<mtl::Dispatch>& ds, int l, int ntok, int64_t pos0
         a.topk = TOPK;
         a.n_expert = NEXP;
         const bool dq2 = td.type == ref::Q2_0;
-        const int gl = 32, gr = 1, gs = 4, ds_ = 4;
+        // Gyro's trellis rows: 80 units of 32 weights a row, so 16 lanes a row (5 each) beat 32 (2.5: half the lanes idle for a unit)
+        const int gl = tg_.type >= ref::TQ2_T && tg_.type <= ref::TQK7 ? 16 : 32, gr = 1, gs = 4, ds_ = 4;
         // the down tile: Q2_0 8,1; else 4,2 - but on the M4 (no M5 layout) Q5_1 4,1 and Q8_0 8,1 (4,2 spills there:
         // 24-36 GB/s, mac-kern 513fc615)
         const bool m4 = !m5_layout();
@@ -866,6 +956,9 @@ void Window::layer(std::vector<mtl::Dispatch>& ds, int l, int ntok, int64_t pos0
                                 "_" + std::to_string(gs);
         const std::string dnn = "moe_down_" + std::to_string(dq2 ? 142 : td.type) + "_" + std::to_string(dl) + "_" +
                                 std::to_string(dr) + "_" + std::to_string(ds_);
+        const auto& hs = strata::kernels::cpu::hadamard_spec();
+        const bool had_gu = hs.gu(l), had_dn = hs.down(l);
+        if (had_gu || had_dn) had_init();
         mtl::Dispatch g;
         const mtl::Buffer& EW = stream_ ? st_->chunk(0) : W_;
         // function constant 23 (QUANT_CTAB): the i-quant grids from constant memory, no threadgroup copy (same values)
@@ -876,6 +969,10 @@ void Window::layer(std::vector<mtl::Dispatch>& ds, int l, int ntok, int64_t pos0
         g.p = P(lib_, gun, ac, gun + ak);
         g.args = {mtl::Arg::B(EW, ebase), mtl::Arg::B(XF_.b, XF_.plane_bytes() * xkind(tg_.type)), mtl::Arg::B(h_), mtl::Arg::B(plan_),
                   mtl::Arg::V(a), mtl::Arg::B(XF_.b, XF_.plane_bytes() * 4)};
+        if (had_gu) {   // the gate / up weights are Hadamard-folded: they read H (s * x), never x
+            had_rows(ds, XF_.b, 0, xr_, 0, N, ntok);
+            g.args[1] = mtl::Arg::B(xr_);
+        }
         if (stream_)
             for (int c = -1; c < 3; ++c)
                 g.args.push_back(c < 0 ? mtl::Arg::B(st_->smap(), (size_t) l * 512 * 4) : mtl::Arg::B(st_->chunk(c + 1)));
@@ -886,6 +983,7 @@ void Window::layer(std::vector<mtl::Dispatch>& ds, int l, int ntok, int64_t pos0
         push(ds, g);
         nb_ = true;
         gemv(ds, T(b + "ffn_down_shexp.weight"), XH_, ysh_, N, ntok);
+        if (had_dn) had_rows(ds, h_, 0, h_, 0, NFF, ntok * TOPK);   // the folded down weights read the rotated h
         mtl::Dispatch dd;
         dd.p = P(lib_, dnn, ac, dnn + ak);
         dd.args = {mtl::Arg::B(EW, ebase), mtl::Arg::B(h_), mtl::Arg::B(ye_), mtl::Arg::B(plan_), mtl::Arg::V(a), mtl::Arg::B(h_)};
@@ -1395,6 +1493,34 @@ void Window::fold(std::vector<mtl::Dispatch>& ds, int n_keep, int hp) {
     nb_ = false;   // what follows reads the folded state: a barrier
 }
 
+void Window::bind_kv() {
+    const int64_t pages = max_cells_ / 4;   // qsa_real_shapes().page_size cells a page
+    auto describe = [&](strata::core::QsaState& q, const mtl::Buffer& k, const mtl::Buffer& v, const mtl::Buffer& ks,
+                        const mtl::Buffer& vs, const mtl::Buffer& pooled) {
+        q.k_pool = q.v_pool = nullptr;
+        q.kv_int8 = true;
+        q.kv_q4 = q.kv_hybrid = q.kv_rot = false;
+        q.k_q = (int8_t*) k.ptr; q.v_q = (int8_t*) v.ptr;
+        q.k_scale = (uint16_t*) ks.ptr; q.v_scale = (uint16_t*) vs.ptr;
+        q.kv_mode = 0;
+        q.kv_elastic = -1;
+        q.n_pages = q.n_slots = pages;
+        q.max_cells = max_cells_;
+        q.idx_pooled_rows = max_cells_ / 4 + 2;
+        q.idx_pooled = (float*) pooled.ptr;
+    };
+    if (ss_ != nullptr)
+        for (size_t j = 0; j < kq_.size() && (int64_t) j < ss_->qsa_alloc; ++j)
+            describe(ss_->qsa_states[ss_->qsa_ord0 + j], kq_[j], vq_[j], ksc_[j], vsc_[j], pooled_[j]);
+    if (draft_ != nullptr && !mkq_.empty())
+        describe(*draft_, mkq_[0], mvq_[0], mksc_[0], mvsc_[0], mpooled_[0]);
+}
+
+Window::CheckpointSizes Window::checkpoint_sizes() const {
+    const size_t gs = 4 * 128 * 48 * 128, hs = 4 * 10240 * 3, ts = 4 * 4 * 128, dsz = 4 * 128;
+    return {gst_.size() * (gs + hs), (size_t) 4 * 9 * 10240, tail_.size() * ts, dead_.size() * dsz, 0};
+}
+
 bool Window::checkpoint_save(strata::core::ConversationCheckpoint& c, std::string& err) {
     (void) err;
     if (pend_fold_ > 0) {   // the last commit's fold first: the checkpoint is the state after it
@@ -1405,14 +1531,15 @@ bool Window::checkpoint_save(strata::core::ConversationCheckpoint& c, std::strin
         pend_fold_ = 0;
     }
     const size_t gs = 4 * 128 * 48 * 128, hs = 4 * 10240 * 3, ts = 4 * 4 * 128, dsz = 4 * 128;
-    c.gdn.resize(gst_.size() * (gs + hs));
+    const CheckpointSizes z = checkpoint_sizes();
+    c.gdn.resize(z.gdn);
     for (size_t i = 0; i < gst_.size(); ++i) {
         std::memcpy(c.gdn.data() + i * (gs + hs), gst_[i].ptr, gs);
         std::memcpy(c.gdn.data() + i * (gs + hs) + gs, ghist_[hp_][i].ptr, hs);
     }
-    c.ple.assign((const uint8_t*) pleHist_.ptr, (const uint8_t*) pleHist_.ptr + 4 * 9 * 10240);
-    c.tails.resize(tail_.size() * ts);
-    c.dead.resize(dead_.size() * dsz);
+    c.ple.assign((const uint8_t*) pleHist_.ptr, (const uint8_t*) pleHist_.ptr + z.ple);
+    c.tails.resize(z.tails);
+    c.dead.resize(z.dead);
     for (size_t j = 0; j < tail_.size(); ++j) {
         std::memcpy(c.tails.data() + j * ts, tail_[j].ptr, ts);
         std::memcpy(c.dead.data() + j * dsz, dead_[j].ptr, dsz);
@@ -1443,8 +1570,9 @@ void Window::reset() {
 
 bool Window::checkpoint_restore(const strata::core::ConversationCheckpoint& c, std::string& err) {
     const size_t gs = 4 * 128 * 48 * 128, hs = 4 * 10240 * 3, ts = 4 * 4 * 128, dsz = 4 * 128;
-    if (c.gdn.size() != gst_.size() * (gs + hs) || c.ple.size() != (size_t) 4 * 9 * 10240 ||
-        c.tails.size() != tail_.size() * ts || c.dead.size() != dead_.size() * dsz) {
+    const CheckpointSizes z = checkpoint_sizes();
+    if (c.gdn.size() != z.gdn || c.ple.size() != z.ple || c.tails.size() != z.tails || c.dead.size() != z.dead ||
+        c.block_pos.size() != z.block_pos) {
         err = "metal window: the checkpoint is not this engine's (sizes differ)";
         return false;
     }
@@ -2008,11 +2136,12 @@ struct PgMm { uint64_t gate_off, up_off, down_off, gu_stride, d_stride; uint32_t
 int pg_unit(int t) { return t == ref::Q2_0 || t == ref::IQ3_S || t == ref::BF16 || t == ref::F32 ? 16 : 32; }
 // the v2 (M4) expert tiles: the K-quants need TK 128, Q8_0 / IQ4_XS TK 32 (their 32-value units), the rest TK 16
 std::string gu2_tile(int t) {
+    if (t >= ref::TQ2_T && t <= ref::TQK7) return "_16_64_32_2";   // Gyro: 32-value units
     if (t == ref::Q4_K || t == ref::Q5_K || t == ref::Q6_K) return "_16_16_128_2";   // the M4's best (513fc615)
     if (t == ref::Q8_0 || t == ref::IQ4_XS) return "_16_64_32_2";
     return "_16_64_16_2";
 }
-std::string dn2_tile(int t) { return t == ref::IQ4_NL || t == ref::Q5_1 || t == ref::Q8_0 ? "_16_64_32_2" : "_16_64_16_2"; }
+std::string dn2_tile(int t) { return t == ref::IQ4_NL || t == ref::Q5_1 || t == ref::Q8_0 || (t >= ref::TQ2_T && t <= ref::TQK7) ? "_16_64_32_2" : "_16_64_16_2"; }
 }  // namespace
 
 struct Window::PromptGemm {
@@ -2023,6 +2152,7 @@ struct Window::PromptGemm {
         iqr, ikr, qcur, qcurh, qidx, scores, qids, part, XQ, xqh, logits, ids, wts, bcnt, boff, eoff, tiles, meta, stok, sw, pos,
         XS, HS, YE, yr, gsh, ush, hh, ys, sgv, emb, embh, pkey, pval, keyn, qn, gated, normW;
     mtl::Buffer WD, WU, Wqkv, Wz, Wal, Wbe, Wout, Wq, Wk, Wv, Wiq, Wik, Wr, Wsg, Wshg, Wshu, Wshd, Wpk, Wpv;
+    mtl::Buffer xrot;
 };
 
 int Window::prompt_chunk_rows() const { return pg_ ? pg_->MT : 0; }
@@ -2057,12 +2187,13 @@ bool Window::prompt_gemm_init(std::string& err) {
     p.MT = C;
     p.QS = std::min(C, 256);
     p.lib = cx_->compile({"quant.metal", "units.metal", "mma.metal", "dense_mm.metal", "moe_mm.metal", "gr.metal", "gemv.metal",
-                          "prompt.metal"});
+                          "prompt.metal", "hadamard.metal"});
     p.lgdn = cx_->compile({"gdn.metal", "gdn_prompt.metal"}, "#define NO_GGML_COMMON 1\n");
     p.lqsa = cx_->compile({"qsa.metal", "qsa_prompt.metal"}, "#define NO_GGML_COMMON 1\n");
     p.k4 = ::coop_k4(*cx_);
     const char* eg = std::getenv("STRATA_METAL_PROMPT_EXPERTS");   // v2 | v3 (default: v3 with the M5's layout)
     p.gu_v3 = p.dn_v3 = eg ? std::string(eg) == "v3" : p.k4;
+    if (trellis_experts()) p.gu_v3 = p.dn_v3 = false;   // Gyro: the trellis types have the v2 kernels only
     const char* eq = std::getenv("STRATA_METAL_PROMPT_QSA");       // v1 | flash (default: flash with the M5's layout)
     p.flash = eq ? std::string(eq) == "flash" : p.k4;
     const size_t MT = (size_t) C;
@@ -2107,6 +2238,7 @@ bool Window::prompt_gemm_init(std::string& err) {
         p.Wq = F16((size_t) 12288 * N); p.Wk = F16((size_t) 512 * N); p.Wv = F16((size_t) 512 * N); p.Wiq = F16((size_t) 512 * N);
         p.Wik = F16((size_t) 128 * N); p.Wr = F16((size_t) NEXP * N); p.Wsg = F16((size_t) N); p.Wshg = F16((size_t) NFF * N);
         p.Wshu = F16((size_t) NFF * N); p.Wshd = F16((size_t) N * NFF);
+        if (strata::kernels::cpu::hadamard_spec().any()) p.xrot = F32(MT * N);   // Gyro: the rotated FFN input
         if (ple_on_) {
             p.emb = F32(MT * N); p.embh = F16(MT * N); p.pkey = F32(MT * 10240); p.pval = F32(MT * N); p.keyn = F32(MT * 10240);
             p.qn = F32(MT * 10240); p.gated = F32(MT * 10240); p.normW = F32(MT * 10240);
@@ -2339,10 +2471,18 @@ bool Window::prompt_chunk(const int32_t* tokens, int Tn, int64_t pos0, std::stri
         if (stream_) { ma.gate_off = 0; ma.up_off = st_->up_in_slot(l); ma.down_off = st_->down_in_slot(l); }
         const size_t ebase = moe_rebase(ma.gate_off, ma.up_off, ma.down_off);
         const uint32_t ne_ = N;
+        const auto& hs = strata::kernels::cpu::hadamard_spec();
+        const bool had_gu = hs.gu(l), had_dn = hs.down(l);
+        if (had_gu || had_dn) had_init();
+        if (had_gu) {   // Gyro: the folded gate / up weights read H (s * x); rotated once per token, before the gather
+            HadArgs ha{N, hs_set_[0] ? 1u : 0u, 1.0f / std::sqrt((float) hs.block), 0};
+            D(PP(p.lib, "hadamard_rows"), {mtl::Arg::B(p.mixed), mtl::Arg::B(p.xrot), mtl::Arg::B(hsg_[0]), mtl::Arg::V(ha)},
+              N / hs.block, T, hs.block);
+        }
         {
             mtl::Dispatch g;
             g.p = PP(p.lib, "mm_gather");
-            g.args = {mtl::Arg::B(p.mixed), mtl::Arg::B(p.stok), mtl::Arg::B(p.XS), mtl::Arg::V(ne_)};
+            g.args = {mtl::Arg::B(had_gu ? p.xrot : p.mixed), mtl::Arg::B(p.stok), mtl::Arg::B(p.XS), mtl::Arg::V(ne_)};
             g.tg[0] = 256;
             g.indirect = &p.meta;
             g.ind_off = 8 * 4;
@@ -2375,6 +2515,16 @@ bool Window::prompt_chunk(const int32_t* tokens, int Tn, int64_t pos0, std::stri
         gu.ind_off = 2 * 4;
         if (stream_) cuts.push_back((int) ds.size());   // the host's turn: this layer's experts put in place
         push(ds, gu);
+        if (had_dn) {   // the folded down weights read the rotated h: in place on the rows the plan placed
+            HadArgs ha{NFF, hs_set_[1] ? 1u : 0u, 1.0f / std::sqrt((float) hs.block), 0};
+            mtl::Dispatch hd;
+            hd.p = PP(p.lib, "hadamard_rows_h");
+            hd.args = {mtl::Arg::B(p.HS), mtl::Arg::B(hsg_[1]), mtl::Arg::V(ha)};
+            hd.tg[0] = hs.block;
+            hd.indirect = &p.meta;
+            hd.ind_off = 8 * 4;
+            push(ds, hd);
+        }
         mtl::Dispatch dn;
         if (p.dn_v3) {
             const std::string fn = "mm_down3_" + std::to_string(ed.type) + "_16_64_32_2";
@@ -2479,6 +2629,8 @@ void set_model_shard(const char* shard1) { g_shard1 = shard1 ? shard1 : ""; }
 // One decode window per process: the prompt path (Prefill::init) may bring it up before the Verifier does.
 namespace {
 Window* g_the_window = nullptr;
+// the drafter is loaded before the window exists: its QsaState waits here for window_init
+strata::core::QsaState* g_draft_state = nullptr;
 }
 void* window_create() {
     if (g_the_window == nullptr) g_the_window = new Window();
@@ -2503,6 +2655,8 @@ bool window_init(void* w, const strata::core::ModelGeometry& g, strata::core::Se
         if (!x->init(g, ss, g_shard1, MAXT, max_cells, err)) return false;
         window_register(w);
         if (!mtp_load_pending(x, err)) return false;
+        x->set_draft_state(g_draft_state);
+        x->bind_kv();
     }
     x->set_max_t(max_t);
     *n_vocab = x->vocab();
@@ -2524,6 +2678,18 @@ void window_reset() {
 bool window_checkpoint_save(strata::core::ConversationCheckpoint& c, std::string& err) {
     if (g_the_window == nullptr || !g_the_window->ready()) { err = "metal window: not up"; return false; }
     return g_the_window->checkpoint_save(c, err);
+}
+bool window_checkpoint_sizes(size_t& gdn, size_t& ple, size_t& tails, size_t& dead, size_t& block_pos) {
+    if (g_the_window == nullptr || !g_the_window->ready()) return false;
+    const auto z = g_the_window->checkpoint_sizes();
+    gdn = z.gdn; ple = z.ple; tails = z.tails; dead = z.dead; block_pos = z.block_pos;
+    return true;
+}
+void mtp_bind_state(strata::core::QsaState* st) {
+    g_draft_state = st;
+    if (g_the_window == nullptr || !g_the_window->ready()) return;
+    g_the_window->set_draft_state(st);
+    g_the_window->bind_kv();
 }
 bool window_checkpoint_restore(const strata::core::ConversationCheckpoint& c, std::string& err) {
     if (g_the_window == nullptr || !g_the_window->ready()) { err = "metal window: not up"; return false; }
@@ -2547,16 +2713,8 @@ std::string g_mtp_path;
 int g_mtp_max_t = 0;
 bool mtp_load(const std::string& rt_dir, int max_t, std::string& err) {
     (void) err;
-    // the MTP model in GGUF form (tools/mtp_pack.py) beside the rt directory: STRATA_METAL_MTP_GGUF, else
-    // <rt>/../mtp-q2_0.gguf
-    std::string path;
-    if (const char* e = std::getenv("STRATA_METAL_MTP_GGUF")) path = e;
-    else {
-        std::string d = rt_dir;
-        while (!d.empty() && d.back() == '/') d.pop_back();
-        const size_t s = d.rfind('/');
-        path = (s == std::string::npos ? std::string(".") : d.substr(0, s)) + "/mtp-q2_0.gguf";
-    }
+    // the MTP model in GGUF form (tools/mtp_pack.py) beside the rt directory; the session fingerprint resolves it the same way
+    const std::string path = strata::core::metal_mtp_gguf_path(rt_dir);
     g_mtp_path = path;
     g_mtp_max_t = max_t;
     return true;
