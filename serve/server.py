@@ -4441,6 +4441,8 @@ class Service:
                         if src.startswith(("http://", "https://")):
                             src = fetched[item["source"]] = Vision.download(src)   # outside the FIFO, as in prepare()
                         with self._turn(cancel):  # the encoder takes its turn with the requests (see below)
+                            self._vision_up()   # an elastic encoder is down between pictures: start it first, as
+                                                # prepare()'s own image path does (else encode() writes to a None proc)
                             self.vision.encode(src)
                     except (ValueError, OSError) as e:
                         why = str(e)
