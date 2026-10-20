@@ -1,3 +1,6 @@
+#ifdef STRATA_ENABLE_DFLASH2
+#include "strata/kernels/dflash2.hpp"
+#endif
 // src/core/verify.cpp - see include/strata/core/verify.hpp.
 #include "strata/core/batch_rows.hpp"
 #include "strata/core/sm75_series.hpp"
@@ -784,12 +787,14 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
         const auto& lay = strata::kernels::cpu::expert_layout();
         for (size_t l = 0; lay.native && l < lay.fmt.size(); ++l) had_gu_any = had_gu_any || lay.fmt[l].had_gu;
     }
+    tap_stride_ = (int64_t) max_t_ * (int64_t) g.n_embd;
     // ---- the device arena: the same sequence counted, then carved
     auto carve = [&](Bump& b) {
         tok_ = b.take<int32_t>(T); step_ = b.take<int32_t>(T * strata::kernels::kStepCount);
         pos_ = b.take<int32_t>(T * (NH + NKV + IQ)); commit_ = b.take<int32_t>(2 + T);
         ple_ = b.take<float>(T * N); emb_ = b.take<float>(T * N); R_ = b.take<float>(T * HC * N);
         mixed_ = b.take<float>(T * N); bo_ = b.take<float>(T * N);
+        if (n_taps_ > 0) taps_ = b.take<float>((uint64_t) n_taps_ * T * N);
         inj_ = b.take<float>(T * HC); inj2_ = b.take<float>(T * HC);
         lo_ = b.take<float>(T * (uint64_t) g.hc_lr); rs_ = b.take<float>(T * HC); xn_ = b.take<float>(T * HC * N);
         xq_ = b.take<uint8_t>(strata::kernels::native_q8_1_bytes(max_in, (int) T));
@@ -1291,6 +1296,18 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
             join(1);
             inputs_pending = false;
         }
+        for (int ti = 0; ti < n_taps_; ++ti)
+            if (l == tap_layers_[ti]) {   // DFlash tap: the attn-half read's contracted residual (docs/DFLASH.md)
+#ifdef STRATA_ENABLE_DFLASH2
+                if (tap_hc_mean_)
+                    strata::kernels::dflash2_hc_mean(Rt(tb),
+                        taps_ + ((size_t) ti * max_t_ + tb) * N, nullptr, n, N, HC, cs);
+                else
+#endif
+                cudaMemcpyAsync(taps_ + ((size_t) ti * (size_t) max_t_ + (size_t) tb) * N,
+                                mixed_ + (size_t) tb * N, (size_t) (te - tb) * N * sizeof(float),
+                                cudaMemcpyDeviceToDevice, cs);
+            }
         stamp(l, 1, grp);
         float* xm = mixed_ + tb * N;
         bool il_ready = false;   // xil_ holds xq_'s interleaved copy (reset whenever xq_ is rewritten)
@@ -3196,8 +3213,10 @@ bool Verifier::commit(int n_keep, std::string& err) {
     h_commit_[0] = n_keep;
     h_commit_[1] = n_keep - 1;
     for (int t = 0; t < max_t_; ++t) h_commit_[2 + t] = t < n_keep ? (int32_t) (last_pos0_ + t) : -1;
-    if (last_t_ == 1 && !always_publish_ && one_token_self_commit()) {
+    if (last_t_ == 1 && !always_publish_ && !g_qfuse() && one_token_self_commit()) {
         // a one-token window has advanced the state itself (record_window): no commit graph
+        // Quantization fusion disables that write in record_window; replay the
+        // commit in that case too, otherwise single-token steps lose GDN state.
     } else {
         std::atomic_thread_fence(std::memory_order_seq_cst);
         // STRATA_COMMIT_TIMING=1 (measurement only): the commit graph's GPU time, from an event pair around it (read at the
