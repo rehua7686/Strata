@@ -33,14 +33,16 @@ import shutil
 import subprocess
 import sys
 
-# Kernels with a stack frame at 296b59d2, measured with CUDA 13.1 (V13.1.80) for sm_86 and sm_120 (Release): the ones
+# Kernels with a stack frame at cbfd5b92, measured with CUDA 13.1 (V13.1.80) for sm_86 and sm_120 (Release): the ones
 # that keep a per-thread array in local memory, and the ones ptxas spills.  Key: the demangled kernel name without its
 # template arguments and parameter list (namespace kept; matched exactly), so every instantiation of a template kernel
 # shares one entry.  Value: per sm_, the allowed (STACK, LOCAL) bytes - the measured maximum, so any growth fails; an
 # sm_ that is absent allows nothing.  The line above each entry says what the array is, or what spilled (ptxas -v:
 # spill stores / spill loads at the register count it settled on).  A spill is a finding, not a licence: the entries
-# document the state of 296b59d2 so the gate can hold the line from here.
+# document the state of cbfd5b92 so the gate can hold the line from here.
 ALLOWED = {
+    # float values[V] (V = NE / 32 = 8): the lane's logits for the top-k selection (no spill)
+    "q36k::k_route_group": {"sm_86": (32, 0)},
     # spill 4 B stores / 4 B loads at 64 registers under __launch_bounds__(256); its w[4] / o[4] stay in registers
     "strata::kernels::native_down_amd_kernel": {"sm_120": (8, 0)},
     # spill 12 / 12 at 80 registers under __launch_bounds__(256)
@@ -53,34 +55,59 @@ ALLOWED = {
     "strata::kernels::route_resident_k": {"sm_86": (40, 0)},
     # float a[HPT][32] (HPT = 3): the thread's score tile (no spill; sm_120 keeps it in 142 registers)
     "strata::kernels::{anonymous}::attn_chunk_kernel": {"sm_86": (384, 0)},
-    # spill 88 / 276 (sm_86), 196 / 284 (sm_120) at the 64-register cap of __launch_bounds__(TK_T = 1024); its
+    # spill 4 / 4 at 64 registers under __launch_bounds__(THREADS = 256); its cc[NC] / kk[NC][8] / pp[NC][16] / acc[G]
+    # stay in registers
+    "strata::kernels::{anonymous}::attn_chunk_kernel_pre75": {"sm_86": (8, 0)},
+    # float qr[G][8] (G = 12): the thread's query rows (no spill; sm_120 keeps them in registers)
+    "strata::kernels::{anonymous}::attn_chunk_slots_kernel": {"sm_86": (384, 0)},
+    # spill 4 / 4 at 80 registers under __launch_bounds__(SCORE_WARPS * 32 = 256); its qr[NQ][IDX_HEADS] /
+    # qv[IDX_HEADS][8] stay in registers
+    "strata::kernels::{anonymous}::block_scores_rows_kernel": {"sm_120": (8, 0)},
+    # spill 4 / 4 at 80 registers under __launch_bounds__(256); its acc[8][TN] / qr[8] / kr[TN] stay in registers
+    "strata::kernels::{anonymous}::block_scores_simt_kernel": {"sm_86": (8, 0)},
+    # spill 92 / 288 (sm_86), 172 / 260 (sm_120) at the 64-register cap of __launch_bounds__(TK_T = 1024); its
     # uint32_t key[PER] stays in registers
-    "strata::kernels::{anonymous}::block_topk_reg_kernel": {"sm_86": (88, 0), "sm_120": (112, 0)},
+    "strata::kernels::{anonymous}::block_topk_reg_kernel": {"sm_86": (96, 0), "sm_120": (88, 0)},
     # the Runs parameter (src[4], dst[4], len[4], n) copied to the stack to index it with the run loop variable
     # (no spill)
     "strata::kernels::{anonymous}::copy_kernel": {"sm_86": (88, 0), "sm_120": (88, 0)},
-    # the TYPE 11 (Q3_K) instantiations only: uint32_t aux[4], the block's unpacked scales (no spill)
-    "strata::kernels::{anonymous}::dequant_kernel": {"sm_86": (16, 0), "sm_120": (16, 0)},
+    # 16-byte stack frame on sm_86 and sm_120, no spill; per-thread array not located in the source
+    "strata::kernels::{anonymous}::dequant_gu_kernel": {"sm_86": (16, 0), "sm_120": (16, 0)},
+    # the TYPE 11 (Q3_K) instantiations: uint32_t aux[4], the block's unpacked scales (16 B); on sm_86 also the
+    # TYPE 14 (Q6_K) vectorised instantiation's T buf[32] flush buffer (64 B); no spill
+    "strata::kernels::{anonymous}::dequant_kernel": {"sm_86": (64, 0), "sm_120": (16, 0)},
+    # float s[R][NC]: the entry group's partial sums, plus spill 428 / 600 (sm_86), 200 / 328 (sm_120) at the
+    # 64-register cap of __launch_bounds__(256, STRATA_EXPDEC_MINB = 4)
+    "strata::kernels::{anonymous}::expdec_down_kernel": {"sm_86": (272, 0), "sm_120": (136, 0)},
+    # float s[R][NC] / s8[R][NC]: the entry group's partial sums, plus spill 60 / 92 (sm_86), 52 / 88 (sm_120) at the
+    # 64-register cap of __launch_bounds__(256, MINB)
+    "strata::kernels::{anonymous}::expdec_gu_kernel": {"sm_86": (56, 0), "sm_120": (40, 0)},
     # the DBG instantiation only: the printf argument buffer, two ints (no spill)
     "strata::kernels::{anonymous}::gdn_step_commit_kernel": {"sm_86": (8, 0), "sm_120": (8, 0)},
-    # spill 4 / 4 at 64 registers (sm_86), 8 / 8 at the 128-register cap (sm_120) of __launch_bounds__(S * RG = 512)
-    "strata::kernels::{anonymous}::gdn_step_norm_multi_kernel": {"sm_86": (8, 0), "sm_120": (8, 0)},
+    # spill 4 / 4 at 64 registers under __launch_bounds__(S * RG = 512), no local array (sm_120: no frame any more)
+    "strata::kernels::{anonymous}::gdn_step_norm_multi_kernel": {"sm_86": (8, 0)},
     # float gw[HC] / ss[HC] (no spill)
     "strata::kernels::{anonymous}::gr_down_kernel": {"sm_120": (16, 0)},
+    # spill 8 / 24 at 80 registers under __launch_bounds__(THREADS = 256); its acc[MAX_T] / s[MAX_T] / wv[TQ] stay in
+    # registers
+    "strata::kernels::{anonymous}::gr_down_multi_kernel": {"sm_86": (8, 0)},
     # spill 4 / 8 at 128 registers under __launch_bounds__(THREADS = 256), no local array
     "strata::kernels::{anonymous}::gr_down_q8_fast_kernel": {"sm_86": (8, 0)},
     # spill 12 / 24 at 128 registers under __launch_bounds__(THREADS = 256), no local array (sm_120: 206 registers,
     # no spill)
     "strata::kernels::{anonymous}::gr_down_q8_kernel": {"sm_86": (16, 0)},
-    # spill 8 / 8 (sm_86), 16 / 16 (sm_120) at 80 registers under __launch_bounds__(THREADS = 256); its acc[MAX_T] /
+    # spill 16 / 16 at 80 (sm_86) / 64 (sm_120) registers under __launch_bounds__(THREADS = 256); its acc[MAX_T] /
     # s[MAX_T] stay in registers
-    "strata::kernels::{anonymous}::gr_down_staged_kernel": {"sm_86": (8, 0), "sm_120": (16, 0)},
+    "strata::kernels::{anonymous}::gr_down_staged_kernel": {"sm_86": (16, 0), "sm_120": (8, 0)},
     # spill 12 / 8 at 48 registers under __launch_bounds__(THREADS = 256), no local array
     "strata::kernels::{anonymous}::gr_down_v3_kernel": {"sm_86": (8, 0)},
     # spill 8 / 16 at 48 registers under __launch_bounds__(THREADS = 256), no local array
     "strata::kernels::{anonymous}::gr_up_q8_fast_kernel": {"sm_86": (8, 0)},
     # spill 4 / 4 at 40 registers under __launch_bounds__(THREADS = 256), no local array
     "strata::kernels::{anonymous}::gr_up_v3_kernel": {"sm_120": (8, 0)},
+    # spill 16 / 48 at the 64-register cap of __launch_bounds__(THREADS = 256, 4); its mine[RPW] / rv[RPW] / wn[RPW] /
+    # bo[RPW] (RPW = 8) stay in registers
+    "strata::kernels::{anonymous}::gr_up75_kernel": {"sm_120": (16, 0)},
     # spill 4 / 4 at 48 registers under __launch_bounds__(256), no local array
     "strata::kernels::{anonymous}::native_down_kernel": {"sm_86": (8, 0)},
     # int off[GRP_NC] / float s[GRP_NC] (GRP_NC = 4): per-entry token offsets and partial sums, plus spill 16 / 16
@@ -90,8 +117,16 @@ ALLOWED = {
     "strata::kernels::{anonymous}::native_gu_kernel": {"sm_86": (8, 0), "sm_120": (8, 0)},
     # const int off[1..4] / float s[1..4] per entry group, plus spill 56 / 64 (sm_86), 52 / 64 (sm_120)
     "strata::kernels::{anonymous}::native_gu_multi_kernel": {"sm_86": (96, 0), "sm_120": (112, 0)},
+    # const int off[1..3] / float a[1..3] / b[1..3] per entry group and gv[GRP_NC] / uv[GRP_NC], plus spill 88 / 140 at
+    # the 64-register cap of __launch_bounds__(512)
+    "strata::kernels::{anonymous}::native_gu_swiglu_kernel": {"sm_120": (64, 0)},
     # float o[NC] plus spill 60 / 60 at 56 registers under __launch_bounds__(4 * WARP)
     "strata::kernels::{anonymous}::native_mmvq_il_kernel": {"sm_120": (24, 0)},
+    # 16-byte stack frame on sm_86 and sm_120, no spill; per-thread array not located in the source
+    "strata::kernels::{anonymous}::pair_kernel": {"sm_86": (16, 0), "sm_120": (16, 0)},
+    # spill 24 / 24 at 168 registers under __launch_bounds__(THREADS = 128, 3); its qa[3][2][4] / x[2][2][2][4] stay in
+    # registers
+    "strata::kernels::{anonymous}::prompt_attn_i8v3_kernel": {"sm_120": (24, 0)},
     # spill 4 / 12 at 72 registers under __launch_bounds__(THREADS = 128), no local array
     "strata::kernels::{anonymous}::prompt_attn_kernel": {"sm_86": (8, 0)},
     # float values[16]: the lane's 16 logits for the top-k selection (no spill)
