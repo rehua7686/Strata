@@ -1,0 +1,32 @@
+{"round": 0, "arm": "default", "req": "chat0", "decode": 69.1, "prompt": 83.1, "prompt_n": 34, "n": 512, "text": "```python\ndef merge_sorted_lists(list1: list, list2: list) -> list:\n    \"\"\"\n    "}
+{"round": 0, "arm": "default", "req": "chat1", "decode": 61.1, "prompt": 76.8, "prompt_n": 27, "n": 273, "text": "A refrigerator operates by exploiting the physical properties of a specialized f"}
+{"round": 0, "arm": "default", "req": "chat2", "decode": 62.4, "prompt": 83.4, "prompt_n": 29, "n": 205, "text": "1. Set specific, measurable goals to maintain motivation and track your progress"}
+{"round": 0, "arm": "default", "req": "long", "decode": 56.5, "prompt": 1413.1, "prompt_n": 6345, "n": 157, "text": "The list is dominated by nature-related terms such as \"canyon,\" \"river,\" \"meadow"}
+{"round": 0, "arm": "adapt", "req": "chat0", "decode": 56.9, "prompt": 87.3, "prompt_n": 34, "n": 419, "text": "```python\ndef merge_sorted_lists(list1: list, list2: list) -> list:\n    \"\"\"\n    "}
+{"round": 0, "arm": "adapt", "req": "chat1", "decode": 50.6, "prompt": 59.7, "prompt_n": 27, "n": 273, "text": "A refrigerator operates by exploiting the physical properties of a refrigerant, "}
+{"round": 0, "arm": "adapt", "req": "chat2", "decode": 54.5, "prompt": 62.9, "prompt_n": 29, "n": 204, "text": "1. Set specific, measurable goals to maintain motivation and track your progress"}
+{"round": 0, "arm": "adapt", "req": "long", "decode": 55.4, "prompt": 1395.9, "prompt_n": 6345, "n": 157, "text": "The list is composed entirely of common English nouns that evoke a variety of na"}
+{"round": 1, "arm": "adapt", "req": "chat0", "decode": 61.3, "prompt": 94.1, "prompt_n": 34, "n": 419, "text": "```python\ndef merge_sorted_lists(list1: list, list2: list) -> list:\n    \"\"\"\n    "}
+{"round": 1, "arm": "adapt", "req": "chat1", "decode": 55.6, "prompt": 68.2, "prompt_n": 27, "n": 269, "text": "A refrigerator operates by exploiting the physical properties of a refrigerant, "}
+{"round": 1, "arm": "adapt", "req": "chat2", "decode": 56.3, "prompt": 74.6, "prompt_n": 29, "n": 204, "text": "1. Set specific, measurable goals to maintain motivation and track your progress"}
+{"round": 1, "arm": "adapt", "req": "long", "decode": 53.0, "prompt": 1406.6, "prompt_n": 6345, "n": 146, "text": "The list is dominated by nature-related terms such as \"canyon,\" \"river,\" \"meadow"}
+{"round": 1, "arm": "default", "req": "chat0", "decode": 70.1, "prompt": 81.6, "prompt_n": 34, "n": 512, "text": "```python\ndef merge_sorted_lists(list1: list, list2: list) -> list:\n    \"\"\"\n    "}
+{"round": 1, "arm": "default", "req": "chat1", "decode": 59.7, "prompt": 67.9, "prompt_n": 27, "n": 292, "text": "A refrigerator operates by exploiting the physical properties of a specialized f"}
+{"round": 1, "arm": "default", "req": "chat2", "decode": 62.7, "prompt": 76.6, "prompt_n": 29, "n": 206, "text": "1. Set specific, measurable goals to maintain motivation and track your progress"}
+{"round": 1, "arm": "default", "req": "long", "decode": 60.4, "prompt": 1384.5, "prompt_n": 6345, "n": 149, "text": "The list is dominated by nature-related terms such as \"canyon,\" \"river,\" \"meadow"}
+{"round": 2, "arm": "default", "req": "chat0", "decode": 69.9, "prompt": 81.0, "prompt_n": 34, "n": 512, "text": "```python\ndef merge_sorted_lists(list1: list, list2: list) -> list:\n    \"\"\"\n    "}
+{"round": 2, "arm": "default", "req": "chat1", "decode": 60.3, "prompt": 71.9, "prompt_n": 27, "n": 273, "text": "A refrigerator operates by exploiting the physical properties of a specialized f"}
+{"round": 2, "arm": "default", "req": "chat2", "decode": 58.4, "prompt": 79.8, "prompt_n": 29, "n": 205, "text": "1. Set specific, measurable goals to maintain motivation and track your progress"}
+{"round": 2, "arm": "default", "req": "long", "decode": 54.1, "prompt": 1396.9, "prompt_n": 6345, "n": 157, "text": "The list is dominated by nature-related terms such as \"canyon,\" \"river,\" \"meadow"}
+{"round": 2, "arm": "adapt", "req": "chat0", "decode": 59.3, "prompt": 89.9, "prompt_n": 34, "n": 401, "text": "```python\ndef merge_sorted_lists(list1: list, list2: list) -> list:\n    \"\"\"\n    "}
+{"round": 2, "arm": "adapt", "req": "chat1", "decode": 55.6, "prompt": 66.9, "prompt_n": 27, "n": 267, "text": "A refrigerator operates by exploiting the thermodynamic properties of a circulat"}
+{"round": 2, "arm": "adapt", "req": "chat2", "decode": 57.5, "prompt": 76.8, "prompt_n": 29, "n": 205, "text": "1. Set specific, measurable goals to maintain motivation and track your progress"}
+{"round": 2, "arm": "adapt", "req": "long", "decode": 54.4, "prompt": 1399.8, "prompt_n": 6345, "n": 146, "text": "The list is dominated by nature-related terms such as \"canyon,\" \"river,\" \"meadow"}
+{"round": 3, "arm": "adapt", "req": "chat0", "decode": 59.7, "prompt": 81.8, "prompt_n": 34, "n": 401, "text": "```python\ndef merge_sorted_lists(list1: list, list2: list) -> list:\n    \"\"\"\n    "}
+{"round": 3, "arm": "adapt", "req": "chat1", "decode": 57.3, "prompt": 68.1, "prompt_n": 27, "n": 271, "text": "A refrigerator operates by exploiting the physical properties of a specialized f"}
+{"round": 3, "arm": "adapt", "req": "chat2", "decode": 58.4, "prompt": 74.8, "prompt_n": 29, "n": 204, "text": "1. Set specific, measurable goals to maintain motivation and track your progress"}
+{"round": 3, "arm": "adapt", "req": "long", "decode": 54.0, "prompt": 1409.5, "prompt_n": 6345, "n": 148, "text": "The list is dominated by nature-related terms such as \"canyon,\" \"river,\" \"meadow"}
+{"round": 3, "arm": "default", "req": "chat0", "decode": 69.7, "prompt": 88.9, "prompt_n": 34, "n": 512, "text": "```python\ndef merge_sorted_lists(list1: list, list2: list) -> list:\n    \"\"\"\n    "}
+{"round": 3, "arm": "default", "req": "chat1", "decode": 59.9, "prompt": 76.4, "prompt_n": 27, "n": 278, "text": "A refrigerator operates by exploiting the physical properties of a specialized f"}
+{"round": 3, "arm": "default", "req": "chat2", "decode": 64.1, "prompt": 80.8, "prompt_n": 29, "n": 205, "text": "1. Set specific, measurable goals to maintain motivation and track your progress"}
+{"round": 3, "arm": "default", "req": "long", "decode": 55.2, "prompt": 1408.0, "prompt_n": 6345, "n": 150, "text": "The list is dominated by nature-related terms such as \"canyon,\" \"river,\" \"meadow"}

@@ -1,0 +1,49 @@
+# journalctl -k, 2026-10-21 00:00 to 01:50 (PDT), on the benchmark PC. Only page allocation failures and stalls, swap write errors
+# and bcachefs data read errors are kept (a bcachefs error is joined with its outcome line). Host name and paths replaced.
+# 253:0 is /dev/zram0, the compressed-RAM swap device (priority 100); the PC's second swap is an NVMe partition (priority -1).
+Oct 21 00:19:38 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 86173073408: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 00:20:52 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 19133571072: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 00:22:05 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-iq4xs/models/signal-AP-IQ4_XS/Signal-3.8-Flash-Next-AP-IQ4_XS.gguf offset 6994264064: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 00:29:58 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-iq4xs/models/signal-AP-IQ4_XS/Signal-3.8-Flash-Next-AP-IQ4_XS.gguf offset 33024901120: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 00:32:47 <HOST> kernel: strata: page allocation failure: order:0, mode:0x40920(GFP_ATOMIC|__GFP_ZERO|__GFP_COMP), nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 00:34:02 <HOST> kernel: Compositor: page allocation failure: order:0, mode:0xc0de0(GFP_KERNEL|__GFP_HIGH|__GFP_ZERO|__GFP_COMP|__GFP_NOMEMALLOC), nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 00:34:03 <HOST> kernel: Write-error on swap-device (253:0:42915952)
+Oct 21 00:34:03 <HOST> kernel: Write-error on swap-device (253:0:42915960)
+Oct 21 00:34:06 <HOST> kernel: Write-error on swap-device (253:0:1013424)
+Oct 21 00:34:06 <HOST> kernel: Write-error on swap-device (253:0:42926768)
+Oct 21 00:34:06 <HOST> kernel: Write-error on swap-device (253:0:42632544)
+Oct 21 00:34:06 <HOST> kernel: Write-error on swap-device (253:0:42673504)
+Oct 21 00:34:06 <HOST> kernel: Write-error on swap-device (253:0:42915968)
+Oct 21 00:34:06 <HOST> kernel: Write-error on swap-device (253:0:42900880)
+Oct 21 00:34:06 <HOST> kernel: Write-error on swap-device (253:0:42673512)
+Oct 21 00:34:06 <HOST> kernel: Write-error on swap-device (253:0:42885128)
+Oct 21 00:41:02 <HOST> kernel: Hyprland: page allocation stall for 11 secs: order:3, mode:0x40dc0(GFP_KERNEL|__GFP_ZERO|__GFP_COMP) nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 00:41:33 <HOST> kernel: tpi: page allocation stall for 13 secs: order:0, mode:0x140dca(GFP_HIGHUSER_MOVABLE|__GFP_ZERO|__GFP_COMP) nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 00:42:03 <HOST> kernel: steamwebhelper: page allocation stall for 17 secs: order:3, mode:0xc00(GFP_NOIO) nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 00:42:18 <HOST> kernel: node-V8Worker: page allocation stall for 11 secs: order:0, mode:0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP) nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 00:42:42 <HOST> kernel: bash: page allocation stall for 10 secs: order:0, mode:0x140cca(GFP_HIGHUSER_MOVABLE|__GFP_COMP) nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 00:42:59 <HOST> kernel: tpi: page allocation stall for 13 secs: order:0, mode:0x140dca(GFP_HIGHUSER_MOVABLE|__GFP_ZERO|__GFP_COMP) nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 01:06:31 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 100681445376: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:10:22 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 88021483520: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:10:22 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 88506449920: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:11:48 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 39885422592: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:12:48 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 16542396416: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:19:33 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 23524388864: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:22:59 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 7704158208: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:31:30 <HOST> kernel: strata: page allocation failure: order:0, mode:0x40920(GFP_ATOMIC|__GFP_ZERO|__GFP_COMP), nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 01:32:06 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-iq4xs/models/signal-AP-IQ4_XS/Signal-3.8-Flash-Next-AP-IQ4_XS.gguf offset 56643026944: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:35:26 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 75097702400: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:35:56 <HOST> kernel: bcachefs (nvme0n1p1): data read error at <MODEL_DATA>/ap-q4kxl-gguf/Signal-3.8-Flash-Next-AP-Q4_K_XL.gguf offset 25977450496: nvme0n1p1 checksum (1); successful retry, self healing
+Oct 21 01:41:58 <HOST> kernel: strata: page allocation failure: order:0, mode:0x40920(GFP_ATOMIC|__GFP_ZERO|__GFP_COMP), nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 01:44:39 <HOST> kernel: pi: page allocation failure: order:0, mode:0x40cc0(GFP_KERNEL|__GFP_COMP), nodemask=(null),cpuset=user.slice,mems_allowed=0-1
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:32087768)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:15844008)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:15844152)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:15844264)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:15844400)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:43791920)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:47705432)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:43793272)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:43793288)
+Oct 21 01:44:41 <HOST> kernel: Write-error on swap-device (253:0:47705552)
+Oct 21 01:45:09 <HOST> kernel: Isolated Web Co: page allocation failure: order:0, mode:0xc0de0(GFP_KERNEL|__GFP_HIGH|__GFP_ZERO|__GFP_COMP|__GFP_NOMEMALLOC), nodemask=(null),cpuset=user.slice,mems_allowed=0-1
