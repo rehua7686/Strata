@@ -30,6 +30,7 @@
 #include "strata/core/conversation_memory.hpp"
 #include "strata/core/coupled_draft.hpp"
 #include "strata/core/expert_source.hpp"
+#include "strata/core/resident_decode_prefetch.hpp"
 #include "strata/core/foresight_swap.hpp"
 #include "strata/core/pinned.hpp"
 #include "strata/core/pin_budget.hpp"
@@ -10934,6 +10935,20 @@ int main(int argc, char** argv) {
         }
         strata::core::pin_sim_report("at READY");
         strata::core::pin_reserve_release_hard();   // the load is over: nothing else needs the headroom
+        // #1922: all startup reservations and prediction consumers are final here.
+        // Adaptive exchanges preserve coverage and serial prompts return their loans;
+        // batched serving and elastic KV can introduce file-backed decode work.
+        if (drive.d.lookahead != nullptr && srcp == &src && src.complement_ready()) {
+            const bool prediction_consumer = drive.d.fs != nullptr || lookahead.stats_on();
+            const strata::core::ResidentDecodePrefetch mode{
+                o.serve, o.batch > 0, kvg.on, prediction_consumer, std::getenv("STRATA_LOOKAHEAD") != nullptr};
+            if (strata::core::resident_decode_needs_no_prediction(
+                    mode, host_res, (size_t) g.n_layers * (size_t) g.n_expert,
+                    [&](size_t i) { return src.has_resident((int64_t) (i / g.n_expert), (int64_t) (i % g.n_expert)); })) {
+                drive.d.lookahead = nullptr;
+                std::fprintf(stderr, "strata generate: routing-aware prefetch off (complete GPU/RAM coverage during serial decode)\n");
+            }
+        }
         std::printf("READY %lld stop\n", (long long) o.max_context);   // "stop": this engine honours STOP
         std::fflush(stdout);
         std::string line;
