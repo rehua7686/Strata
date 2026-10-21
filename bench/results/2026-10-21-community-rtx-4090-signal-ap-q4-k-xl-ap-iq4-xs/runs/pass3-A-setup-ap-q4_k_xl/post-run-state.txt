@@ -1,0 +1,4 @@
+end: 2026-10-21T01:46:03-07:00
+memory.used [MiB], clocks.current.sm [MHz], power.draw [W], temperature.gpu
+178 MiB, 2610 MHz, 72.41 W, 47
+llama-swap /running: {"running":[]}

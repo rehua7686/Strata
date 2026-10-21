@@ -1,0 +1,60 @@
+Starting setup-ap-iq4_xs.json on port 18233 (loading takes 1-3 minutes; the PC may be slow meanwhile) ...
+  still loading (0 s) ...
+  still loading (30 s) ...
+Running the suite (about 3-10 minutes) ...
+warming up (not measured) ...
+  calibrated: about 1.08 tokens per word
+chat: 3 short questions x 3 runs, up to 100 new tokens
+  run 1 q1: decode 66.3 tok/s, first token 0.58 s, 100 tokens
+  run 1 q2: decode 61.1 tok/s, first token 0.573 s, 100 tokens
+  run 1 q3: decode 57.4 tok/s, first token 0.552 s, 100 tokens
+  run 2 q1: decode 70.9 tok/s, first token 0.507 s, 100 tokens
+  run 2 q2: decode 69.0 tok/s, first token 0.415 s, 100 tokens
+  run 2 q3: decode 65.9 tok/s, first token 0.447 s, 100 tokens
+  run 3 q1: decode 70.1 tok/s, first token 0.491 s, 100 tokens
+  run 3 q2: decode 75.1 tok/s, first token 0.395 s, 100 tokens
+  run 3 q3: decode 68.1 tok/s, first token 0.449 s, 100 tokens
+4K prompt: 3 fresh prompts of about 4096 tokens, 24 new tokens
+  run 1: 4019 tokens, prompt 1492.9 tok/s (0 reused), first token 2.712 s
+  run 2: 4019 tokens, prompt 1713.3 tok/s (0 reused), first token 2.369 s
+  run 3: 4019 tokens, prompt 1722.5 tok/s (0 reused), first token 2.356 s
+16K prompt: 3 fresh prompts of about 16384 tokens, 24 new tokens
+  run 1: 16058 tokens, prompt 2923.1 tok/s (0 reused), first token 5.522 s
+  run 2: 16058 tokens, prompt 3141.9 tok/s (0 reused), first token 5.139 s
+  run 3: 16058 tokens, prompt 3146.3 tok/s (0 reused), first token 5.133 s
+agent: a session of 6 turns with four tools, x 3 runs
+  run 1 turn 0: prompt 609, reused 0, read 609, first token 1.615 s
+  run 1 turn 1: prompt 4087, reused 625, read 3462, first token 2.847 s
+  run 1 turn 2: prompt 5620, reused 4151, read 1469, first token 2.517 s
+  run 1 turn 3: prompt 9053, reused 5684, read 3369, first token 2.924 s
+  run 1 turn 4: prompt 11800, reused 9092, read 2708, first token 3.274 s
+  run 1 turn 5: prompt 14682, reused 11863, read 2819, first token 3.034 s
+  run 2 turn 0: prompt 609, reused 0, read 609, first token 1.618 s
+  run 2 turn 1: prompt 4099, reused 636, read 3463, first token 2.445 s
+  run 2 turn 2: prompt 5632, reused 4163, read 1469, first token 2.334 s
+  run 2 turn 3: prompt 9065, reused 5625, read 3440, first token 2.472 s
+  run 2 turn 4: prompt 11830, reused 9122, read 2708, first token 2.421 s
+  run 2 turn 5: prompt 14704, reused 11885, read 2819, first token 2.419 s
+  run 3 turn 0: prompt 609, reused 0, read 609, first token 1.57 s
+  run 3 turn 1: prompt 4087, reused 625, read 3462, first token 2.442 s
+  run 3 turn 2: prompt 5620, reused 4150, read 1470, first token 2.301 s
+  run 3 turn 3: prompt 9053, reused 5613, read 3440, first token 2.463 s
+  run 3 turn 4: prompt 11825, reused 9117, read 2708, first token 2.421 s
+  run 3 turn 5: prompt 14708, reused 11888, read 2820, first token 2.437 s
+
+Results (median, range over the runs):
+  chat decode tok/s                     68.10   (57.40 - 75.10, n=9)
+  chat first token (s)                   0.49   (0.40 - 0.58, n=9)
+  4K prompt tok/s                     1713.30   (1492.90 - 1722.50, n=3)
+  4K first token (s)                     2.37   (2.36 - 2.71, n=3)
+  16K prompt tok/s                    3141.90   (2923.10 - 3146.30, n=3)
+  16K first token (s)                    5.14   (5.13 - 5.52, n=3)
+  agent cache hit %                     69.34   (69.31 - 69.44, n=3)
+  agent re-read tokens/session          73.00   (2.00 - 73.00, n=3)
+  agent turn first token (s)             2.44   (2.30 - 3.27, n=15)
+  agent decode tok/s                    85.10   (64.10 - 108.90, n=15)
+
+Report: <BENCH>/pass2-B-setup-ap-iq4_xs/2026-10-21-community-rtx-4090-signal-3-8-flash-next-ap-iq4-xs/README.md
+Share it: open a pull request that adds the folder <BENCH>/pass2-B-setup-ap-iq4_xs/2026-10-21-community-rtx-4090-signal-3-8-flash-next-ap-iq4-xs (see docs/COMMUNITY_BENCHMARKS.md), or paste README.md into a GitHub issue. Home folders, user and host names and IP addresses are already replaced; read it once before you share it.
+For results other people can compare with, run the standard benchmark: strata bench run (docs/BENCHMARK_PROTOCOL.md).
+exit=0
