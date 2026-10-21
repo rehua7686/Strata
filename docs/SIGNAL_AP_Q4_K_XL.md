@@ -3,10 +3,10 @@
 Setup installs Signal (`--family signal`, sizes AP-Q4_K_XL and AP-IQ4_XS, images included): see
 [What setup does](#what-setup-does). The rest of this page is the manual workflow setup automates, and what was checked.
 
-Packed, loaded and run on Linux with an RTX 4090 (24 GB), Ryzen 9 7950X3D and 93 GB RAM on 2026-10-11. The engine
-starts on this pack and answers requests; the speeds quoted here were measured with `tools/strata_bench.py` on the
-configuration shown, and no output-quality comparison against the base model was made. What was checked is listed
-at the end.
+Packed, loaded and run on Linux with an RTX 4090 (24 GB), Ryzen 9 7950X3D and 93 GB RAM on 2026-10-11, and run again
+on the same machine on 2026-10-21 with Strata 0.1.46.3. The engine starts on this pack and answers requests; the
+speeds quoted here were measured with `tools/strata_bench.py` on the 2026-10-21 runs, on the configuration shown with
+each table, and no output-quality comparison against the base model was made. What was checked is listed at the end.
 
 ## The file
 
@@ -115,37 +115,56 @@ The last four settings belong to one machine (RTX 4090, Ryzen 9 7950X3D, 93 GiB 
 `--pcie-frac` and `--spec-min-p` are what `setup.py`'s calibration chose for Signal there on 2026-10-11, each the
 median of three rounds; `--pool-workers 8` is its pick from one run per value. On other hardware, calibrate again.
 The calibration also chose `--adapt-every 1 --adapt-swaps 80 --adapt-decay 0.97`, from one run each. Measured with
-`tools/ab_engine.py` (four rounds, the arms alternating), the engine's default was faster: 44.3 against 35.9 tokens/s
-median for 100-token answers (faster in 16 of 16 pairs) and 51.4 against 46.1 tokens/s for answers of up to 512 tokens
-(12 of 16). Those three settings are left out.
+`tools/ab_engine.py` on 2026-10-11 (four rounds, the arms alternating), the engine's default was faster: 44.3 against
+35.9 tokens/s median for 100-token answers (faster in 16 of 16 pairs) and 51.4 against 46.1 tokens/s for answers of up
+to 512 tokens (12 of 16). Measured again on 2026-10-21 with the configuration above (`--kv int8`, Strata 0.1.46.3,
+four rounds, the arms alternating, median over the three short chats and the long prompt of each round): 56.7 against
+48.5 tokens/s for 100-token answers (16 of 16 pairs) and 60.8 against 56.0 for up to 512 tokens (15 of 16). With the
+three settings the first question's longer answers came out shorter (401-419 tokens against 512), so the texts were
+not the same. Those three settings are left out.
 
 `--kv int8` follows Signal's authors, who advise against a 4-bit value cache ("a 4-bit value cache makes long traces
-degenerate"). The calibration and the comparison above ran with `--kv q4_0`. With `--kv q4_0` the engine had 190 MiB
-more VRAM for experts (6216 cache slots instead of 6141) and kept 1.4 GiB less of the KV cache in pinned RAM (1.69
-against 3.09 GiB); `tools/strata_bench.py` the same day measured 46.5 tokens/s for short answers, 51.9 in the agent
-session and 1978 tokens/s for the 16K prompt, so 8-bit was not slower (table below).
+degenerate"). The calibration and the 2026-10-11 comparison above ran with `--kv q4_0`. On 2026-10-21 the engine's log
+for this configuration with `--kv q4_0` showed 195 MiB more VRAM for experts (6206 cache slots instead of 6132) and
+1.4 GiB less of the KV cache in pinned RAM (1.69 against 3.09 GiB). `tools/strata_bench.py`, two runs of each, the two
+alternating, measured (median of all requests) 59.9 tokens/s with `--kv int8` against 61.1 with `--kv q4_0` for short
+answers, 71.1 against 65.8 in the agent session and 2374 against 2319 tokens/s for the 16K prompt. So 8-bit was not
+slower in the agent session or on the long prompt, and the short-answer difference (1.2 tokens/s) is small beside the
+spread within one run (52.3-70.0 tokens/s with `--kv int8`).
 
 `--resident-budget-gib` caps only the RAM copy of the experts the GPU cache does not hold. With the 6141 cache slots
 this card gets (15.81 GiB of VRAM) that is 18,435 experts, 47.47 GiB, and any budget from there up copies all of them
 (with `--kv q4_0` and 6216 slots, the engine logged the same 47.28 GiB page-locked copy at 67 and at 69). The 26.8 GiB
 PLE table is what gets streamed. Below 47.47 GiB, the least-used experts are read from the SSD instead.
+That was the engine of 2026-10-11; the engine of 2026-10-21 (0.1.46.3) logs 6132 slots and a 51.11 GiB page-locked
+copy for the configuration above (50.80 GiB with `--kv q4_0` and 6206 slots), and the comparison of budgets 67 and 69
+was not repeated.
 
-With exactly the configuration above, on 2026-10-11, the engine took 110 and 121 s (two starts) from process start to
-the port answering and held 60.3 GiB of RSS after a few short requests. `tools/strata_bench.py` (3 runs per test,
-thinking off, temperature 0) measured:
+With exactly the configuration above (the paths of this machine; no images), on 2026-10-21 with Strata 0.1.46.3, the
+server was ready 69-90 s after start (eight starts, `tools/ab_engine.py`). `tools/strata_bench.py` (3 runs per test,
+thinking off, temperature 0), run four times on this configuration with one start each, measured:
 
-| test | median | range |
-|---|---|---|
-| short chat, decode (up to 100 tokens) | 49.3 tokens/s | 42.5-60.2 (9 answers) |
-| short chat, first token | 0.50 s | 0.41-0.57 |
-| 4K prompt | 1223 tokens/s, first token 3.31 s | 698-1233 tokens/s |
-| 16K prompt | 2071 tokens/s, first token 7.78 s | 1509-2072 tokens/s |
-| agent session, decode | 58.7 tokens/s | 37.7-75.3 (15 turns) |
-| agent session, first token | 3.37 s | 2.94-4.63 |
-| agent session, prompt reused from the cache | 68.8% | 68.7-68.8% |
+| test | median of the runs | each run's median | slowest to fastest request |
+|---|---|---|---|
+| short chat, decode (up to 100 tokens) | 57.2 tokens/s | 55.5, 48.5, 61.0, 59.0 | 38.9-72.1 (36 answers) |
+| short chat, first token | 0.50 s | 0.52, 0.56, 0.46, 0.48 | 0.37-0.65 |
+| 4K prompt | 1479 tokens/s | 1466, 433, 1492, 1492 | 331-1511 (12 prompts) |
+| 4K prompt, first token | 2.74 s | 2.77, 9.29, 2.71, 2.71 | 2.68-12.17 |
+| 16K prompt | 2372 tokens/s | 2358, 875, 2394, 2387 | 875-2407 (12 prompts) |
+| 16K prompt, first token | 6.80 s | 6.84, 18.37, 6.73, 6.76 | 6.70-18.38 |
+| agent session, decode (turns 2-6) | 70.0 tokens/s | 68.4, 61.0, 71.6, 73.5 | 48.2-96.2 (60 turns) |
+| agent session, first token (turns 2-6) | 2.78 s | 2.81, 8.89, 2.71, 2.75 | 2.53-9.78 |
+| agent session, prompt reused from the cache | 69.4% | 69.4, 69.4, 69.3, 69.3 | 69.3-69.4% |
 
-The desktop ran on the integrated GPU, with two of the three monitors cabled to the 4090; the Steam client was open and
-no game was running.
+Run 2 is the slow one: its 4K and 16K prompts ran at 433 and 875 tokens/s with first tokens of 9.3 and 18.4 s, against
+1466-1492 and 2358-2394 tokens/s and about 2.7 and 6.8 s in the other three. The kernel log has two page-allocation
+failures during it (one in the engine while it loaded, one in the desktop compositor), the 1-minute load average at
+its start was 8.2, and the machine's available memory was not sampled then. The cause is not established. The run
+stays in the table; without it the medians of the runs would be 59.0 tokens/s for short answers and 1492 tokens/s for
+the 4K prompt, against 57.2 and 1479.
+
+The 4090 held 178 MiB before each run. A desktop session was open during all of them: a browser, the Steam client (no
+game) and the coding agent that drove the runs.
 
 `--mtp mtp/rt` is the original model's draft head, prepared by `tools/mtp_fetch.py`, `tools/mtp_pack.py` and
 `tools/mtp_rt.py` as in the [OrcaRouter setup](ORCA.md); without `--mtp` the server drafts by lookup only. Signal
@@ -163,29 +182,67 @@ IQ4_NL downs as UD-IQ4_XS's ([QUANTS.md](QUANTS.md)) - though neither Signal fil
 Run on the machine above on 2026-10-11 with the file already downloaded:
 `./setup.sh --family signal --model AP-Q4_K_XL --gguf-dir <its folder> --vision gpu --build --yes --no-start`. It took
 5 minutes, including the SHA-256 check of the 101 GB file and compiling the image encoder. The pack, the tokenizer and
-the embedding file it wrote are byte for byte the ones built by hand above. Its config is not the one above: 32K
-context (setup's default on this card), a 63 GiB RAM budget, images on, and none of the calibrated settings; the KV
-cache is 8-bit in both. The server was ready 86 s after start, and `tools/strata_bench.py` (3 runs per test,
-thinking off, temperature 0) measured:
+the embedding file it wrote are byte for byte the ones built by hand above.
 
-| test | median | range |
-|---|---|---|
-| short chat, decode (up to 100 tokens) | 59.9 tokens/s | 48.1-70.8 (9 answers) |
-| short chat, first token | 0.38 s | 0.33-0.45 |
-| 4K prompt | 1400 tokens/s, first token 2.89 s | 960-1402 tokens/s |
-| 16K prompt | 2301 tokens/s, first token 7.00 s | 1834-2317 tokens/s |
-| agent session, decode | 71.2 tokens/s | 44.4-89.8 (15 turns) |
-| agent session, first token | 2.95 s | 2.44-4.12 |
-| agent session, prompt reused from the cache | 68.7% | 68.6-68.8% |
+Run again on 2026-10-21 with Strata 0.1.46.3 (`setup.py --family signal --model AP-Q4_K_XL --data-dir <folder>
+--gguf-dir <its folder> --vision gpu --no-start --yes`, into an empty data folder, the engine already built): 325 s,
+including the SHA-256 check, the pack and the 5 GB MTP download. Its config is not the hand-built one above: 131072
+tokens of context (setup's default on this card; the hand-built one has 262144), every expert kept in RAM instead of a
+67 GiB budget (setup does that from about 80 GiB of RAM), the PLE table read from the GGUF into RAM (`--ple-gguf`,
+`--ple-io ram`), images on (`--vision`, `--vram-reserve-mib 700`), `--spec-min-p 0.5` instead of 0.70, and neither
+`--pcie-frac` nor `--pool-workers`; the KV cache is 8-bit in both. `tools/strata_bench.py` (3 runs per test, thinking
+off, temperature 0), run three times with one start each, measured:
 
-Every speed here is higher than in the table above, but the two configurations differ in five settings at once
-(context, RAM budget, the three calibrated settings), plus images, so this does not say which of them makes the
-difference.
+| test | median of the runs | each run's median | slowest to fastest request |
+|---|---|---|---|
+| short chat, decode (up to 100 tokens) | 62.7 tokens/s | 62.7, 59.5, 64.4 | 44.8-75.5 (27 answers) |
+| short chat, first token | 0.53 s | 0.53, 0.57, 0.49 | 0.39-0.70 |
+| 4K prompt | 1413 tokens/s | 1473, 1413, 1324 | 1180-1488 (9 prompts) |
+| 4K prompt, first token | 2.87 s | 2.75, 2.87, 3.06 | 2.73-3.44 |
+| 16K prompt | 2670 tokens/s | 2733, 2670, 2529 | 2453-2734 (9 prompts) |
+| 16K prompt, first token | 6.04 s | 5.90, 6.04, 6.39 | 5.90-6.57 |
+| agent session, decode (turns 2-6) | 75.6 tokens/s | 75.6, 72.3, 83.8 | 56.0-99.9 (45 turns) |
+| agent session, first token (turns 2-6) | 2.94 s | 2.88, 2.94, 3.59 | 2.73-42.21 |
+| agent session, prompt reused from the cache | 69.4% | 69.4, 69.3, 69.4 | 69.3-69.4% |
 
-AP-IQ4_XS has not been downloaded or run. Its header, read from the first 32 MB of the file, differs from
-AP-Q4_K_XL's only in the routed experts' gate and up projections: IQ3_S instead of Q4_K, 57,252,249,600 bytes of
-experts. IQ3_S gate/up with IQ4_NL downs is the pair Unsloth's UD-IQ4_XS uses, which setup already runs on NVIDIA and
-AMD cards.
+In run 3 the last turn of the first agent session took 42.2 s to its first token (the other 44 turns: 2.7-5.9 s, the
+slowest of them, 5.9 s, also in that run). The sampler, which read the GPU every 10 s, shows it nearly idle for at
+least 19 s during the agent part of that run, the kernel log has page-allocation failures in two desktop programs 30
+seconds apart, and the machine's available memory was down to 9.3 GiB while the engine ran (18.8-20.9 GiB in the
+other runs of that session). The cause is not established. The turn stays in the table.
+
+Against the hand-built configuration's table above, setup's is faster for short answers (62.7 against 57.2 tokens/s),
+the 16K prompt (2670 against 2372) and the agent session (75.6 against 70.0), and about the same for the 4K prompt
+(1413 against 1479). The two differ in six settings at once (context, RAM budget, PLE table, speculation threshold,
+the PCIe fraction and the pool workers), plus images, so this does not say which of them makes the difference.
+
+AP-IQ4_XS (90,447,294,816 bytes) was run through setup on 2026-10-19 and again on 2026-10-21. Its header, read from
+the first 32 MB of the file, differs from AP-Q4_K_XL's only in the routed experts' gate and up projections: IQ3_S
+instead of Q4_K, 57,252,249,600 bytes of experts. IQ3_S gate/up with IQ4_NL downs is the pair Unsloth's UD-IQ4_XS
+uses, which setup already runs on NVIDIA and AMD cards.
+
+`setup.py --family signal --model AP-IQ4_XS --vision gpu` took 1766 s on 2026-10-19 with the engine of that day
+(0.1.45.3), including the 90 GB download, its SHA-256 check, the pack, the BF16 embedding and the MTP head. Its config
+has the same settings as AP-Q4_K_XL's setup config above (131072 tokens of context, every expert in RAM, images on).
+`tools/strata_bench.py` (3 runs per test, thinking off, temperature 0), run three times on 2026-10-21 with one start
+each, measured:
+
+| test | median of the runs | each run's median | slowest to fastest request |
+|---|---|---|---|
+| short chat, decode (up to 100 tokens) | 78.4 tokens/s | 78.4, 68.1, 80.2 | 57.4-94.4 (27 answers) |
+| short chat, first token | 0.42 s | 0.42, 0.49, 0.40 | 0.29-0.59 |
+| 4K prompt | 1724 tokens/s | 1849, 1713, 1724 | 1436-1852 (9 prompts) |
+| 4K prompt, first token | 2.35 s | 2.19, 2.37, 2.35 | 2.19-2.82 |
+| 16K prompt | 3155 tokens/s | 3290, 3142, 3155 | 2923-3325 (9 prompts) |
+| 16K prompt, first token | 5.12 s | 4.90, 5.14, 5.12 | 4.86-5.52 |
+| agent session, decode (turns 2-6) | 94.7 tokens/s | 95.9, 85.1, 94.7 | 64.1-114.3 (45 turns) |
+| agent session, first token (turns 2-6) | 2.44 s | 2.38, 2.44, 2.85 | 2.20-4.22 |
+| agent session, prompt reused from the cache | 69.3% | 69.2, 69.3, 69.3 | 69.2-69.3% |
+
+On the same setup config AP-IQ4_XS was faster than AP-Q4_K_XL: short answers 78.4 against 62.7 tokens/s, the 4K prompt
+1724 against 1413, the 16K prompt 3155 against 2670 and the agent session 94.7 against 75.6. The runs differ by more
+here than for AP-Q4_K_XL (short answers 68.1, 78.4 and 80.2 tokens/s); no cause was found for the lowest. Output
+quality was not compared with AP-Q4_K_XL's, and no picture was sent to it.
 
 ## Images
 
@@ -224,7 +281,7 @@ Checked on 2026-10-11 on the machine above:
 - `tools/iq_pack.py --compat-bf16` completed: `index.txt` (1081 rows), `native_experts.txt` (v3, 512 experts per
   layer, 67,947,724,800 bytes), `dense.bin`, `conversions.json`, `compat-bf16.json` and `tokenizer/`.
 - `tools/embd_bf16_pack.py --gguf` completed: 1,271,398,784 bytes, worst rounding error 0.00036.
-- Packing tests: `.venv/bin/python -m unittest discover -s tools -p test_iq_pack.py` - 32 tests, all pass. Two of them
+- Packing tests: `.venv/bin/python -m unittest discover -s tools -p test_iq_pack.py` - 35 tests, all pass. Two of them
   are for `tools/embd_bf16_pack.py --gguf`: a small Q6_K table in a model split over two files comes out as the
   BF16 rounding of gguf-py's dequantization, byte for byte, in more than one pass of rows; a missing tensor and a
   1-D tensor are refused.
@@ -246,9 +303,11 @@ Not checked:
 - Output quality against the base model is not measured, and neither is the draft head's acceptance rate on this
   fine-tune - Signal verifies every draft, but how often it accepts one is unknown here. The speeds above are one
   machine's; on other hardware, calibrate and watch the log for the engine's own complaints.
-- Only AP-Q4_K_XL from that repository was downloaded and run. AP-IQ4_XS's header was read, not its weights; Q8_0
-  was not examined.
-- Setup's download of the 101 GB file (the run above used `--gguf-dir`), setup on Windows, AMD cards, several GPUs,
+- AP-Q4_K_XL was checked as listed above. AP-IQ4_XS was run through setup and `tools/strata_bench.py` (above) and
+  answered an arithmetic question (391), but none of the other checks listed here (the OrcaRouter list, pictures) was
+  run on it. Q8_0 was not examined.
+- Setup's download of the 101 GB AP-Q4_K_XL file (both runs above used `--gguf-dir`; AP-IQ4_XS's 90 GB download went
+  through setup), setup on Windows, AMD cards, several GPUs,
   and the image encoder on the CPU.
 - `tools/embd_bf16_pack.py --model` was not run end to end, because no safetensors checkpoint was on the machine. Its
   header was compared byte for byte with the one the previous code built, and the table is copied by the same loop,

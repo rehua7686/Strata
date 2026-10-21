@@ -249,12 +249,14 @@ experts in RAM and reads the rest from the SSD while it answers. Setup also writ
 (1.3 GB), which the engine reads instead of the file's Q6_K table. Images use Signal's own encoder. Its license is the
 Qwen Community License 1.0 (see its page).
 
-AP-Q4_K_XL with the config setup wrote (32K context, 8-bit KV, images on), on an RTX 4090 with 93 GB of RAM: 59.9
-tokens/s for short answers and 71.2 tokens/s in an agent session (`tools/strata_bench.py`, medians of 3 runs). Neither
-size is NVIDIA-only: every format they use has AMD kernels (Q4_K experts run on an R9700 as UD-Q4_K_XL's, IQ3_S and
-IQ4_NL as UD-IQ4_XS's - [QUANTS.md](QUANTS.md)), but neither Signal file has run on an AMD card yet. AP-IQ4_XS has not
-been run; its file differs from AP-Q4_K_XL only in the experts' gate/up type, the one UD-IQ4_XS uses. Details and
-the manual steps: [Signal](SIGNAL_AP_Q4_K_XL.md).
+With the config setup wrote (128K context, 8-bit KV, images on, every expert in RAM), on an RTX 4090 with 93 GB of RAM
+and Strata 0.1.46.3 (`tools/strata_bench.py`, three runs of the suite each, medians of the runs): AP-Q4_K_XL 62.7
+tokens/s for short answers and 75.6 in an agent session; AP-IQ4_XS 78.4 and 94.7. Speeds moved from run to run
+(AP-IQ4_XS short answers: 68.1, 78.4 and 80.2 tokens/s in the three runs); each run is in the tables of the Signal
+page. Neither size is NVIDIA-only: every format they use has AMD kernels (Q4_K experts run on an R9700 as
+UD-Q4_K_XL's, IQ3_S and IQ4_NL as UD-IQ4_XS's - [QUANTS.md](QUANTS.md)), but neither Signal file has run on an AMD
+card yet. The two files differ only in the experts' gate/up type, the one UD-IQ4_XS uses. Details and the manual
+steps: [Signal](SIGNAL_AP_Q4_K_XL.md).
 
 ```
 START-HERE.bat --setup --family signal --model AP-Q4_K_XL
